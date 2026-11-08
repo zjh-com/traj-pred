@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>雷达/相机 → 轨迹预测</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #182031; --panel2: #1e2839; --line: #2b3648;
+    --text: #e6edf7; --muted: #8b9bb4; --accent: #4ea1ff; --ok: #3ecf8e; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; font-size: 14px;
+  }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, #16203a, #0f1420); }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .4px; }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
+  main { display: flex; height: calc(100vh - 78px); overflow: hidden; }
+  .left { flex: 0 0 clamp(300px, 26vw, 420px); overflow-y: auto; padding: 16px 16px 40px; border-right: 1px solid var(--line); min-width: 0; }
+  .right { flex: 1 1 0; min-width: 0; overflow-y: auto; padding: 16px 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  section h2 { margin: 0 0 10px; font-size: 13px; color: var(--accent); font-weight: 600; }
+  .tw { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+  .tw table { min-width: 388px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { color: var(--muted); font-weight: 500; text-align: left; padding: 4px 3px; font-size: 11.5px; }
+  td { padding: 2px 3px; }
+  input, textarea, select {
+    width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 4px 6px; font-size: 12.5px; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 74px; font-family: Consolas, monospace; font-size: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  label { display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 3px; }
+  button { cursor: pointer; border: none; border-radius: 7px; padding: 9px 16px; font-size: 13.5px; font-weight: 600; font-family: inherit; }
+  .primary { background: var(--accent); color: #08111f; width: 100%; }
+  .primary:hover { background: #6fb4ff; }
+  .primary:disabled { background: #35506f; color: #8b9bb4; cursor: wait; }
+  .mini { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); padding: 3px 9px; font-size: 11.5px; font-weight: 500; }
+  .mini:hover { color: var(--text); border-color: var(--accent); }
+  .toolbar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
+  .card .k { color: var(--muted); font-size: 11.5px; margin-bottom: 5px; }
+  .card .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card .u { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .pass { color: var(--ok); } .fail { color: var(--bad); }
+  canvas { width: 100%; height: 640px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .hint { color: var(--muted); font-size: 12.5px; line-height: 1.7; margin-top: 10px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; background: #22304a; color: #9fc4f5; margin-left: 8px; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid #08111f55; border-top-color: #08111f; border-radius: 50%; animation: s .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  @media (max-width: 900px) {
+    main { flex-direction: column; height: auto; }
+    .left { flex: none; border-right: none; border-bottom: 1px solid var(--line); }
+    canvas { height: 460px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>雷达 / 相机 配置 → 轨迹预测<span class="tag">课题一 · 纯前端可分享版</span></h1>
+  <p>全部计算在浏览器本地完成，无需服务器。改完参数点运行，几秒出结果。</p>
+</header>
+
+<main>
+  <div class="left">
+    <section>
+      <h2>雷达站</h2>
+      <div class="tw">
+      <table id="radarTable">
+        <thead><tr><th>名称</th><th>X</th><th>Y</th><th>Z</th><th>σ距离</th><th>σ角度°</th><th>有效/最大</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      </div>
+      <div class="toolbar"><button class="mini" onclick="addRadar()">+ 增加雷达</button></div>
+    </section>
+
+    <section>
+      <h2>相机站</h2>
+      <div class="tw">
+      <table id="camTable">
+        <thead><tr><th>名称</th><th>X</th><th>Y</th><th>Z</th><th>偏航°</th><th>视场°</th><th>σ角°</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      </div>
+      <div class="toolbar"><button class="mini" onclick="addCam()">+ 增加相机</button></div>
+    </section>
+
+    <section>
+      <h2>目标与仿真</h2>
+      <div class="row3">
+        <div><label>目标速度 m/s</label><input id="speed" value="22"></div>
+        <div><label>最大侧向过载</label><input id="acc" value="4"></div>
+        <div><label>雷达数据率 Hz</label><input id="rate" value="10"></div>
+      </div>
+      <div class="row3">
+        <div><label>仿真时长 s</label><input id="dur" value="200"></div>
+        <div><label>外推时长 s</label><input id="horizon" value="3"></div>
+        <div><label>误差阈值 m</label><input id="thr" value="100"></div>
+      </div>
+      <div class="row">
+        <div><label>传感器组合</label>
+          <select id="sensor">
+            <option value="fusion" selected>雷视融合</option>
+            <option value="radar">纯雷达</option>
+            <option value="camera">纯相机</option>
+          </select>
+        </div>
+        <div><label>跟踪滤波器</label>
+          <select id="filtermode">
+            <option value="imm" selected>IMM（推荐）</option>
+            <option value="ca">CA 单模型</option>
+            <option value="cv">CV 单模型</option>
+          </select>
+        </div>
+      </div>
+      <label>目标航路点（每行 x,y,z）</label>
+      <textarea id="wps">-1200,700,180
+-600,200,200
+0,-200,220
+700,-300,200
+1200,200,160
+800,900,140
+-200,1100,150
+-1000,800,170</textarea>
+    </section>
+
+    <button class="primary" id="runBtn" onclick="run()">运行仿真</button>
+  </div>
+
+  <div class="right">
+    <div class="cards">
+      <div class="card"><div class="k">3 秒外推 RMSE</div><div class="v" id="mRmse">–<span class="u">m</span></div></div>
+      <div class="card"><div class="k">95 分位误差</div><div class="v" id="mP95">–<span class="u">m</span></div></div>
+      <div class="card"><div class="k">状态估计 RMSE</div><div class="v" id="mEst">–<span class="u">m</span></div></div>
+      <div class="card"><div class="k">指标判定（P95 ≤ 阈值）</div><div class="v" id="mPass">–</div></div>
+    </div>
+    <canvas id="plot"></canvas>
+    <div class="hint" id="hint">
+      左侧填好雷达与相机的位置、精度、视场，点「运行仿真」。<br>
+      · 雷达提供距离与角度（σ角度默认 1°，对应任务书指标）<br>
+      · 相机只提供角度，精度更高，但没有距离<br>
+      · 融合 = 在同一滤波器里同时吃两类量测
+    </div>
+  </div>
+</main>
+
+<script>
+/* ==== compat.js ==== */
+/* 兼容层：老环境（Node 12 / 旧浏览器）也能跑 */
+const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+  ? () => performance.now()
+  : () => Date.now();
+
+function num(v, d) {
+  return (v === undefined || v === null || (typeof v === 'number' && isNaN(v))) ? d : +v;
+}
+
+</script>
+<script>
+/* ==== sim.js ==== */
+/*
+ * 课题一 · 轨迹预测仿真引擎（纯 JavaScript）
+ *
+ * 与 Python 版 run_sim.py 等价：
+ *   目标机动 -> 雷达/相机观测 -> IMM-EKF 跟踪 -> 3 秒外推 -> 误差评估
+ *
+ * 无任何外部依赖，可直接在浏览器里跑。
+ */
+
+/* ============================ 随机数 ============================ */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class RNG {
+  constructor(seed) { this.r = mulberry32(seed | 0); this.spare = null; }
+  uniform() { return this.r(); }
+  normal(mu = 0, sd = 1) {
+    if (this.spare !== null) { const v = this.spare; this.spare = null; return mu + sd * v; }
+    let u = 0, v = 0;
+    while (u === 0) u = this.r();
+    v = this.r();
+    const mag = Math.sqrt(-2 * Math.log(u));
+    this.spare = mag * Math.sin(2 * Math.PI * v);
+    return mu + sd * mag * Math.cos(2 * Math.PI * v);
+  }
+}
+
+/* ============================ 线性代数 ============================ */
+function zeros(n, m) { return Array.from({ length: n }, () => new Array(m).fill(0)); }
+function eye(n) { const I = zeros(n, n); for (let i = 0; i < n; i++) I[i][i] = 1; return I; }
+
+function matMul(A, B) {
+  const n = A.length, m = B[0].length, k = B.length;
+  const C = zeros(n, m);
+  for (let i = 0; i < n; i++) {
+    const Ai = A[i];
+    for (let p = 0; p < k; p++) {
+      const a = Ai[p];
+      if (a === 0) continue;
+      const Bp = B[p];
+      for (let j = 0; j < m; j++) C[i][j] += a * Bp[j];
+    }
+  }
+  return C;
+}
+
+function matVec(A, x) {
+  const n = A.length, m = x.length;
+  const y = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    let s = 0; const Ai = A[i];
+    for (let j = 0; j < m; j++) s += Ai[j] * x[j];
+    y[i] = s;
+  }
+  return y;
+}
+
+function transpose(A) {
+  const n = A.length, m = A[0].length;
+  const T = zeros(m, n);
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) T[j][i] = A[i][j];
+  return T;
+}
+
+function add(A, B) {
+  const n = A.length, m = A[0].length;
+  const C = zeros(n, m);
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) C[i][j] = A[i][j] + B[i][j];
+  return C;
+}
+
+function scale(A, s) {
+  return A.map(row => row.map(v => v * s));
+}
+
+/** 高斯消元求逆（含部分主元），失败返回 null */
+function inv(M) {
+  const n = M.length;
+  const A = M.map((r, i) => [...r, ...eye(n)[i]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+    if (Math.abs(A[piv][col]) < 1e-14) return null;
+    [A[col], A[piv]] = [A[piv], A[col]];
+    const d = A[col][col];
+    for (let j = 0; j < 2 * n; j++) A[col][j] /= d;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = A[r][col];
+      if (f === 0) continue;
+      for (let j = 0; j < 2 * n; j++) A[r][j] -= f * A[col][j];
+    }
+  }
+  return A.map(r => r.slice(n));
+}
+
+/* ============================ 运动模型 ============================ */
+function makeF(dt, tau) {
+  const phi = Math.exp(-dt / tau);
+  const a1 = tau * (1 - phi);
+  const a2 = tau * (dt - tau * (1 - phi));
+  const F = eye(9);
+  for (let i = 0; i < 3; i++) {
+    F[i][i + 3] = dt;
+    F[i][i + 6] = a2;
+    F[i + 3][i + 6] = a1;
+    F[i + 6][i + 6] = phi;
+  }
+  return F;
+}
+
+function makeQ(dt, q) {
+  const Q = zeros(9, 9);
+  const base = [
+    [dt ** 5 / 20, dt ** 4 / 8, dt ** 3 / 6],
+    [dt ** 4 / 8, dt ** 3 / 3, dt ** 2 / 2],
+    [dt ** 3 / 6, dt ** 2 / 2, dt],
+  ];
+  // 状态顺序 [px,py,pz, vx,vy,vz, ax,ay,az]：
+  // 第 a 轴对应下标 [a, a+3, a+6]，按 3x3 块填入
+  for (let a = 0; a < 3; a++) {
+    const idx = [a, a + 3, a + 6];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        Q[idx[i]][idx[j]] = q * base[i][j];
+      }
+    }
+  }
+  return Q;
+}
+
+/* ============================ 传感器 ============================ */
+function toPolar(pos, p) {
+  const dx = p[0] - pos[0], dy = p[1] - pos[1], dz = p[2] - pos[2];
+  const rxy = Math.hypot(dx, dy);
+  return [Math.hypot(dx, dy, dz), Math.atan2(dy, dx), Math.atan2(dz, rxy)];
+}
+
+function radarObserve(pos, p) {
+  const [r, az, el] = toPolar(pos, p);
+  const dx = p[0] - pos[0], dy = p[1] - pos[1], dz = p[2] - pos[2];
+  const rxy = Math.hypot(dx, dy);
+  const r2 = Math.max(r * r, 1e-9);
+  const rxy2 = Math.max(rxy * rxy, 1e-9);
+  const H = zeros(3, 9);
+  H[0][0] = dx / Math.max(r, 1e-9);
+  H[0][1] = dy / Math.max(r, 1e-9);
+  H[0][2] = dz / Math.max(r, 1e-9);
+  H[1][0] = -dy / rxy2;
+  H[1][1] = dx / rxy2;
+  H[2][0] = -dz * dx / (r2 * rxy);
+  H[2][1] = -dz * dy / (r2 * rxy);
+  H[2][2] = rxy / r2;
+  return { h: [r, az, el], H, wrap: 1, n: 3 };
+}
+
+function cameraAngles(pos, p) {
+  const dx = p[0] - pos[0], dy = p[1] - pos[1], dz = p[2] - pos[2];
+  const rxy = Math.hypot(dx, dy);
+  return { az: Math.atan2(dy, dx), el: Math.atan2(dz, rxy), r: Math.hypot(dx, dy, dz), rxy };
+}
+
+function cameraObserve(pos, p) {
+  const a = cameraAngles(pos, p);
+  const dx = p[0] - pos[0], dy = p[1] - pos[1], dz = p[2] - pos[2];
+  const r2 = Math.max(a.r * a.r, 1e-9);
+  const rxy2 = Math.max(a.rxy * a.rxy, 1e-9);
+  const rxy = Math.max(a.rxy, 1e-6);
+  const H = zeros(2, 9);
+  H[0][0] = -dy / rxy2;
+  H[0][1] = dx / rxy2;
+  H[1][0] = -dz * dx / (r2 * rxy);
+  H[1][1] = -dz * dy / (r2 * rxy);
+  H[1][2] = a.rxy / r2;
+  return { h: [a.az, a.el], H, wrap: 0, n: 2 };
+}
+
+/* ============================ EKF 模型 ============================ */
+class MotionModel {
+  constructor(name, tau, q) { this.name = name; this.tau = tau; this.q = q; this.x = null; this.P = null; }
+
+  predict(dt) {
+    const F = makeF(dt, this.tau);
+    this.x = matVec(F, this.x);
+    this.P = add(matMul(matMul(F, this.P), transpose(F)), makeQ(dt, this.q));
+  }
+
+  innovation(sensor, z, R) {
+    const p = this.x.slice(0, 3);
+    const { h, H, wrap, n } = sensor.observe(p);
+    const y = new Array(n);
+    for (let i = 0; i < n; i++) y[i] = z[i] - h[i];
+    y[wrap] = ((y[wrap] + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    const S = add(matMul(matMul(H, this.P), transpose(H)), R);
+    return { y, H, S, n };
+  }
+
+  update(sensor, z, R) {
+    const { y, H, S, n } = this.innovation(sensor, z, R);
+    const Sinv = inv(S);
+    if (!Sinv) return;
+    const K = matMul(matMul(this.P, transpose(H)), Sinv);   // 9 x n
+    for (let i = 0; i < 9; i++) {
+      let s = 0;
+      for (let j = 0; j < n; j++) s += K[i][j] * y[j];
+      this.x[i] += s;
+    }
+    const KH = matMul(K, H);
+    const IKH = eye(9);
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 9; j++) IKH[i][j] -= KH[i][j];
+    this.P = add(matMul(matMul(IKH, this.P), transpose(IKH)), matMul(matMul(K, R), transpose(K)));
+
+    // 物理约束：加速度限幅
+    const a = this.x.slice(6, 9);
+    const na = Math.hypot(a[0], a[1], a[2]);
+    if (na > 12) for (let i = 0; i < 3; i++) this.x[6 + i] = a[i] * 12 / na;
+
+    for (let i = 0; i < 9; i++) for (let j = i + 1; j < 9; j++) {
+      const v = 0.5 * (this.P[i][j] + this.P[j][i]);
+      this.P[i][j] = this.P[j][i] = v;
+    }
+  }
+
+  logLikelihood(sensor, z, R) {
+    const { y, S, n } = this.innovation(sensor, z, R);
+    const Sinv = inv(S);
+    if (!Sinv) return -1e9;
+    let quad = 0;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) quad += y[i] * Sinv[i][j] * y[j];
+    let logdet = 0;
+    const lu = detLU(S);
+    if (lu === null || lu <= 0) return -1e9;
+    logdet = Math.log(lu);
+    return -0.5 * (quad + logdet + n * Math.log(2 * Math.PI));
+  }
+}
+
+function detLU(M) {
+  const n = M.length;
+  const A = M.map(r => [...r]);
+  let det = 1;
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    if (Math.abs(A[piv][c]) < 1e-14) return 0;
+    if (piv !== c) { [A[c], A[piv]] = [A[piv], A[c]]; det = -det; }
+    det *= A[c][c];
+    for (let r = c + 1; r < n; r++) {
+      const f = A[r][c] / A[c][c];
+      for (let j = c; j < n; j++) A[r][j] -= f * A[c][j];
+    }
+  }
+  return det;
+}
+
+/* ============================ IMM ============================ */
+class IMMTracker {
+  constructor(modelSpecs, tpm, mu0) {
+    this.models = modelSpecs.map(([n, tau, q]) => new MotionModel(n, tau, q));
+    this.tpm = tpm;
+    this.mu = mu0.slice();
+    this.x = null; this.P = null; this.t = null;
+  }
+
+  initialize(t, pos, vel) {
+    const x0 = new Array(9).fill(0);
+    x0[0] = pos[0]; x0[1] = pos[1]; x0[2] = pos[2];
+    x0[3] = vel[0]; x0[4] = vel[1]; x0[5] = vel[2];
+    const P0 = zeros(9, 9);
+    for (let i = 0; i < 3; i++) P0[i][i] = 40 * 40;
+    for (let i = 3; i < 6; i++) P0[i][i] = 30 * 30;
+    for (let i = 6; i < 9; i++) P0[i][i] = 5 * 5;
+    for (const m of this.models) { m.x = x0.slice(); m.P = P0.map(r => r.slice()); }
+    this.x = x0.slice(); this.P = P0.map(r => r.slice()); this.t = t;
+  }
+
+  step(t, obs) {
+    const dt = t - this.t;
+    this.t = t;
+    const M = this.models.length;
+
+    // 1) 混合
+    const c = new Array(M).fill(0);
+    for (let j = 0; j < M; j++) {
+      for (let i = 0; i < M; i++) c[j] += this.tpm[i][j] * this.mu[i];
+      c[j] = Math.max(c[j], 1e-12);
+    }
+    const mix = zeros(M, M);
+    for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) mix[i][j] = this.tpm[i][j] * this.mu[i] / c[j];
+
+    const xs = this.models.map(m => m.x.slice());
+    const Ps = this.models.map(m => m.P.map(r => r.slice()));
+    for (let j = 0; j < M; j++) {
+      const x0 = new Array(9).fill(0);
+      for (let i = 0; i < M; i++) for (let k = 0; k < 9; k++) x0[k] += mix[i][j] * xs[i][k];
+      const P0 = zeros(9, 9);
+      for (let i = 0; i < M; i++) {
+        const d = xs[i].map((v, k) => v - x0[k]);
+        for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) {
+          P0[a][b] += mix[i][j] * (Ps[i][a][b] + d[a] * d[b]);
+        }
+      }
+      this.models[j].x = x0; this.models[j].P = P0;
+    }
+
+    // 2) 预测
+    for (const m of this.models) m.predict(dt);
+
+    // 3) 更新
+    const loglik = new Array(M).fill(0);
+    for (let j = 0; j < M; j++) {
+      let ll = 0;
+      for (const o of obs) {
+        this.models[j].update(o.sensor, o.z, o.R);
+        ll += this.models[j].logLikelihood(o.sensor, o.z, o.R);
+      }
+      loglik[j] = obs.length ? ll : 0;
+    }
+
+    // 4) 模型概率
+    if (obs.length) {
+      const mx = Math.max(...loglik);
+      let sum = 0;
+      for (let j = 0; j < M; j++) { this.mu[j] = c[j] * Math.exp(Math.max(-50, loglik[j] - mx)); sum += this.mu[j]; }
+      for (let j = 0; j < M; j++) this.mu[j] = Math.max(this.mu[j] / sum, 1e-12);
+      const s2 = this.mu.reduce((a, b) => a + b, 0);
+      for (let j = 0; j < M; j++) this.mu[j] /= s2;
+    }
+
+    // 5) 融合
+    const x = new Array(9).fill(0);
+    for (let j = 0; j < M; j++) for (let k = 0; k < 9; k++) x[k] += this.mu[j] * this.models[j].x[k];
+    const P = zeros(9, 9);
+    for (let j = 0; j < M; j++) {
+      const d = this.models[j].x.map((v, k) => v - x[k]);
+      for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) {
+        P[a][b] += this.mu[j] * (this.models[j].P[a][b] + d[a] * d[b]);
+      }
+    }
+    this.x = x; this.P = P;
+    return x;
+  }
+
+  predictAhead(horizon) {
+    const tau = Math.max(...this.models.map(m => m.tau));
+    return matVec(makeF(horizon, tau), this.x);
+  }
+}
+
+/* ============================ 仿真主流程 ============================ */
+function deg2rad(d) { return d * Math.PI / 180; }
+
+function buildConfig(input) {
+  const cfg = {
+    seed: 20261107,
+    duration: Math.min(Math.max(input.duration || 200, 20), 600),
+    dtMeas: 1 / Math.max(1, input.rate || 10),
+    dtTruth: 0.01,
+    horizon: Math.min(Math.max(input.horizon || 3, 0.5), 10),
+    threshold: input.threshold || 100,
+    targetSpeed: input.speed || 22,
+    targetMaxLatAcc: input.acc || 4,
+    targetMaxVertRate: 6,
+    wpSwitchRadius: 60,
+    qCv: 0.5, qCa: 0.5, tauCv: 0.4, tauCa: 5.0,
+    tpm: [[0.92, 0.08], [0.15, 0.85]],
+    mu0: [0.5, 0.5],
+    stations: (input.radars || []).map(r => ({
+      name: r.name, pos: [num(r.x, 0), num(r.y, 0), num(r.z, 2)],
+      sigmaRange: num(r.sr, 8),
+      sigmaAz: deg2rad(num(r.sa, 1)), sigmaEl: deg2rad(num(r.sa, 1)),
+      rMax: num(r.rmax, 3000), rEff: num(r.reff, 1000),
+      pdMax: 0.95, pdFar: 0.35,
+    })),
+    cameras: (input.cams || []).map(c => ({
+      name: c.name, pos: [num(c.x, 0), num(c.y, 0), num(c.z, 6)],
+      yaw: deg2rad(num(c.yaw, 0)), pitch: deg2rad(num(c.pitch, 12)),
+      hfov: deg2rad(num(c.fov, 90)), vfov: deg2rad(num(c.fov, 90) * 2 / 3),
+      sigmaAng: deg2rad(num(c.sa, 0.1)),
+      narrowHfov: deg2rad(15), narrowVfov: deg2rad(10),
+      sigmaAngNarrow: deg2rad(0.02),
+      rMax: 1600, pd: 0.97,
+    })),
+  };
+
+  const wps = (input.waypoints || []).filter(w => w.length === 3);
+  cfg.waypoints = wps.length ? wps : [[-1200, 700, 180], [-600, 200, 200], [0, -200, 220], [700, -300, 200]];
+  const w0 = cfg.waypoints[0];
+  const n = Math.hypot(w0[0], w0[1]);
+  cfg.targetStart = n > 150 ? [w0[0] * 1.8, w0[1] * 1.8, w0[2] + 20] : [-1800, 1100, 180];
+  return cfg;
+}
+
+function simulate(input) {
+  const cfg = buildConfig(input);
+  const sensorMode = input.sensor || 'fusion';
+  const filterMode = input.filtermode || 'imm';
+  const rng = new RNG(cfg.seed);
+
+  /* --- 目标真值 --- */
+  const nTruth = Math.floor(cfg.duration / cfg.dtTruth) + 1;
+  const truth = new Float64Array(nTruth * 6);
+  let p = cfg.targetStart.slice();
+  let wpIdx = 0;
+  let d0 = [cfg.waypoints[0][0] - p[0], cfg.waypoints[0][1] - p[1], cfg.waypoints[0][2] - p[2]];
+  let dn = Math.hypot(...d0);
+  let v = d0.map(c => cfg.targetSpeed * c / dn);
+  truth[0] = p[0]; truth[1] = p[1]; truth[2] = p[2];
+  truth[3] = v[0]; truth[4] = v[1]; truth[5] = v[2];
+
+  for (let k = 1; k < nTruth; k++) {
+    let wp = cfg.waypoints[wpIdx];
+    if (Math.hypot(wp[0] - p[0], wp[1] - p[1], wp[2] - p[2]) < cfg.wpSwitchRadius) {
+      wpIdx = (wpIdx + 1) % cfg.waypoints.length;
+      wp = cfg.waypoints[wpIdx];
+    }
+    const d = [wp[0] - p[0], wp[1] - p[1], wp[2] - p[2]];
+    const dist = Math.hypot(...d);
+    const vDes = dist < 1e-6 ? v.slice() : d.map(c => cfg.targetSpeed * c / dist);
+    const a = [1.6 * (vDes[0] - v[0]), 1.6 * (vDes[1] - v[1]), 1.6 * (vDes[2] - v[2])];
+    const ah = Math.hypot(a[0], a[1]);
+    if (ah > cfg.targetMaxLatAcc) { a[0] *= cfg.targetMaxLatAcc / ah; a[1] *= cfg.targetMaxLatAcc / ah; }
+    a[2] = Math.min(Math.max(a[2], -cfg.targetMaxVertRate), cfg.targetMaxVertRate);
+    for (let i = 0; i < 3; i++) a[i] += rng.normal(0, 0.15);
+
+    for (let i = 0; i < 3; i++) { v[i] += a[i] * cfg.dtTruth; p[i] += v[i] * cfg.dtTruth; }
+    const o = k * 6;
+    truth[o] = p[0]; truth[o + 1] = p[1]; truth[o + 2] = p[2];
+    truth[o + 3] = v[0]; truth[o + 4] = v[1]; truth[o + 5] = v[2];
+  }
+
+  function truthAt(t) {
+    const x = t / cfg.dtTruth;
+    const i = Math.min(Math.floor(x), nTruth - 1);
+    const j = Math.min(i + 1, nTruth - 1);
+    const f = x - i;
+    const out = new Array(6);
+    for (let c = 0; c < 6; c++) out[c] = truth[i * 6 + c] * (1 - f) + truth[j * 6 + c] * f;
+    return out;
+  }
+
+  /* --- 观测生成 --- */
+  function radarMeasure(trueP) {
+    const out = [];
+    for (const st of cfg.stations) {
+      const [r] = toPolar(st.pos, trueP);
+      let pd = 0;
+      if (r <= st.rMax) {
+        pd = r <= st.rEff ? st.pdMax
+          : st.pdMax + (r - st.rEff) / Math.max(st.rMax - st.rEff, 1e-6) * (st.pdFar - st.pdMax);
+      }
+      if (rng.uniform() > pd) continue;
+      const [, az, el] = toPolar(st.pos, trueP);
+      const z = [r + rng.normal(0, st.sigmaRange),
+                 az + rng.normal(0, st.sigmaAz),
+                 el + rng.normal(0, st.sigmaEl)];
+      const R = [[st.sigmaRange ** 2, 0, 0], [0, st.sigmaAz ** 2, 0], [0, 0, st.sigmaEl ** 2]];
+      out.push({ sensor: { kind: 'radar', observe: (q) => radarObserve(st.pos, q) }, z, R, station: st });
+    }
+    return out;
+  }
+
+  function camMeasure(trueP) {
+    const out = [];
+    for (const cm of cfg.cameras) {
+      const a = cameraAngles(cm.pos, trueP);
+      if (a.r > cm.rMax) continue;
+      const daz = ((a.az - cm.yaw + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+      const del = a.el - cm.pitch;
+      const narrow = Math.abs(daz) <= cm.narrowHfov / 2 && Math.abs(del) <= cm.narrowVfov / 2;
+      const wide = Math.abs(daz) <= cm.hfov / 2 && Math.abs(del) <= cm.vfov / 2;
+      if (!narrow && !wide) continue;
+      if (rng.uniform() > cm.pd) continue;
+      const sig = narrow ? cm.sigmaAngNarrow : cm.sigmaAng;
+      const z = [a.az + rng.normal(0, sig), a.el + rng.normal(0, sig)];
+      const R = [[sig * sig, 0], [0, sig * sig]];
+      out.push({ sensor: { kind: 'camera', observe: (q) => cameraObserve(cm.pos, q) }, z, R, camera: cm });
+    }
+    return out;
+  }
+
+  /* --- 滤波器 --- */
+  let tracker;
+  if (filterMode === 'imm') tracker = new IMMTracker([['CV', cfg.tauCv, cfg.qCv], ['CA', cfg.tauCa, cfg.qCa]], cfg.tpm, cfg.mu0);
+  else if (filterMode === 'ca') tracker = new IMMTracker([['CA', cfg.tauCa, cfg.qCa]], [[1]], [1]);
+  else tracker = new IMMTracker([['CV', cfg.tauCv, cfg.qCv]], [[1]], [1]);
+
+  const nEpoch = Math.round(cfg.duration / cfg.dtMeas);
+  const INIT = 20;
+  const initT = [], initP = [];
+  const rows = [];
+  let camFrames = 0;
+
+  const t0 = nowMs();
+  let busy = 0;
+
+  for (let k = 0; k < nEpoch; k++) {
+    const tk = k * cfg.dtMeas;
+    const st = truthAt(tk);
+    const trueP = st.slice(0, 3);
+
+    const robs = (sensorMode === 'radar' || sensorMode === 'fusion') ? radarMeasure(trueP) : [];
+    const cobs = (sensorMode === 'camera' || sensorMode === 'fusion') ? camMeasure(trueP) : [];
+    if (cobs.length) camFrames++;
+    const obs = robs.concat(cobs);
+
+    if (tracker.x === null) {
+      let fix = null;
+      if (robs.length) fix = radarFix(robs);
+      else if (cobs.length) fix = triangulate(cobs);
+      if (fix && initP.length < INIT) { initT.push(tk); initP.push(fix); }
+      if (initP.length >= INIT) {
+        const n = initP.length;
+        let mt = 0, mp = [0, 0, 0];
+        for (let i = 0; i < n; i++) { mt += initT[i]; for (let c = 0; c < 3; c++) mp[c] += initP[i][c]; }
+        mt /= n; mp = mp.map(v => v / n);
+        let stt = 0, sxt = [0, 0, 0];
+        for (let i = 0; i < n; i++) { const dt = initT[i] - mt; stt += dt * dt; for (let c = 0; c < 3; c++) sxt[c] += dt * (initP[i][c] - mp[c]); }
+        const vel = stt > 0 ? sxt.map(s => s / stt) : [0, 0, 0];
+        const pos = mp.map((m, c) => m + vel[c] * (tk - mt));
+        tracker.initialize(tk, pos, vel);
+      }
+      continue;
+    }
+
+    const ts = nowMs();
+    const x = tracker.step(tk, obs);
+    const xp = tracker.predictAhead(cfg.horizon);
+    busy += nowMs() - ts;
+
+    const tp = tk + cfg.horizon;
+    if (tp > cfg.duration) continue;
+    const fut = truthAt(tp);
+    const predErr = Math.hypot(xp[0] - fut[0], xp[1] - fut[1], xp[2] - fut[2]);
+    const estErr = Math.hypot(x[0] - trueP[0], x[1] - trueP[1], x[2] - trueP[2]);
+
+    rows.push({
+      t: tk, tx: trueP[0], ty: trueP[1], tz: trueP[2],
+      ex: x[0], ey: x[1], ez: x[2],
+      px: xp[0], py: xp[1], pz: xp[2],
+      predErr, estErr, nRadar: robs.length, nCam: cobs.length,
+      muCa: tracker.mu.length > 1 ? tracker.mu[1] : 1,
+    });
+  }
+
+  if (!rows.length) throw new Error('没有产生有效数据');
+
+  const predErrs = rows.map(r => r.predErr);
+  const estErrs = rows.map(r => r.estErr);
+  const sorted = [...predErrs].sort((a, b) => a - b);
+  const pct = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+  const warm = rows.filter(r => r.t >= 5).map(r => r.predErr);
+
+  const metrics = {
+    sensor: sensorMode, mode: filterMode,
+    epochs: rows.length,
+    rmse: rms(predErrs),
+    median: pct(0.5),
+    p95: pct(0.95),
+    max: Math.max(...predErrs),
+    over: predErrs.filter(e => e > cfg.threshold).length / predErrs.length,
+    pass: pct(0.95) <= cfg.threshold,
+    estRmse: rms(estErrs),
+    warmRmse: warm.length ? rms(warm) : 0,
+    warmP95: warm.length ? [...warm].sort((a, b) => a - b)[Math.floor(0.95 * warm.length)] : 0,
+    latencyMs: busy / rows.length,
+    camRatio: camFrames / nEpoch,
+    threshold: cfg.threshold,
+    horizon: cfg.horizon,
+    elapsed: nowMs() - t0,
+  };
+
+  return { metrics, rows, cfg, truth: { n: nTruth, dt: cfg.dtTruth, data: truth } };
+}
+
+/* --- 初始化辅助 --- */
+function radarFix(robs) {
+  if (!robs.length) return null;
+  const pts = robs.map(o => {
+    const [r, az, el] = o.z;
+    const sp = o.station.pos;
+    return [
+      sp[0] + r * Math.cos(el) * Math.cos(az),
+      sp[1] + r * Math.cos(el) * Math.sin(az),
+      sp[2] + r * Math.sin(el),
+    ];
+  });
+  const m = [0, 0, 0];
+  for (const q of pts) for (let c = 0; c < 3; c++) m[c] += q[c] / pts.length;
+  return m;
+}
+
+function triangulate(cobs) {
+  if (cobs.length < 2) return null;
+  const A = zeros(3, 3), b = [0, 0, 0];
+  for (const o of cobs) {
+    const cm = o.camera;
+    const [az, el] = o.z;
+    const u = [Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el)];
+    for (let a = 0; a < 3; a++) {
+      for (let c = 0; c < 3; c++) {
+        const P = (a === c ? 1 : 0) - u[a] * u[c];
+        A[a][c] += P;
+        b[a] += P * cm.pos[c];
+      }
+    }
+  }
+  for (let i = 0; i < 3; i++) A[i][i] += 1e-6;
+  const Ai = inv(A);
+  if (!Ai) return null;
+  return matVec(Ai, b);
+}
+
+</script>
+<script>
+/* ==== charts.js ==== */
+/* 轻量 Canvas 绘图：四联图（俯视轨迹 / 误差曲线 / CDF / 传感器可用性） */
+
+function setupCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function niceTicks(min, max, count) {
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step0 = span / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const norm = step0 / mag;
+  let step;
+  if (norm <= 1) step = 1; else if (norm <= 2) step = 2;
+  else if (norm <= 2.5) step = 2.5; else if (norm <= 5) step = 5; else step = 10;
+  step *= mag;
+  const start = Math.ceil(min / step) * step;
+  const out = [];
+  for (let v = start; v <= max + step * 1e-6; v += step) out.push(v);
+  return out;
+}
+
+function fmt(v) {
+  const a = Math.abs(v);
+  if (a >= 1000) return (v / 1000).toFixed(a >= 10000 ? 0 : 1) + 'k';
+  if (a >= 10) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(1);
+  if (a === 0) return '0';
+  return v.toFixed(2);
+}
+
+/** 画坐标轴 + 网格，返回绘图区 rect */
+function drawAxes(ctx, W, H, opts) {
+  const pad = { l: 52, r: 12, t: 26, b: 38 };
+  const x0 = pad.l, y0 = H - pad.b, x1 = W - pad.r, y1 = pad.t;
+  ctx.save();
+  ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+  ctx.fillStyle = '#9aa8bf';
+  ctx.strokeStyle = '#2b3648';
+  ctx.lineWidth = 1;
+
+  const xt = niceTicks(opts.xmin, opts.xmax, 5);
+  const yt = niceTicks(opts.ymin, opts.ymax, 4);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const v of xt) {
+    const px = x0 + (v - opts.xmin) / (opts.xmax - opts.xmin) * (x1 - x0);
+    ctx.beginPath(); ctx.moveTo(px, y1); ctx.lineTo(px, y0); ctx.stroke();
+    ctx.fillText(fmt(v), px, y0 + 6);
+  }
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (const v of yt) {
+    const py = y0 - (v - opts.ymin) / (opts.ymax - opts.ymin) * (y0 - y1);
+    ctx.beginPath(); ctx.moveTo(x0, py); ctx.lineTo(x1, py); ctx.stroke();
+    ctx.fillText(fmt(v), x0 - 7, py);
+  }
+
+  ctx.strokeStyle = '#3d4a60';
+  ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+  ctx.fillStyle = '#c9d4e6';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  if (opts.xlabel) ctx.fillText(opts.xlabel, (x0 + x1) / 2, y0 + 21);
+  if (opts.ylabel) {
+    ctx.save();
+    ctx.translate(13, (y0 + y1) / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(opts.ylabel, 0, 0);
+    ctx.restore();
+  }
+  if (opts.title) {
+    ctx.fillStyle = '#e6edf7';
+    ctx.font = '12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText(opts.title, (x0 + x1) / 2, 4);
+  }
+  ctx.restore();
+  return { x0, y0, x1, y1 };
+}
+
+function plotLine(ctx, rect, xs, ys, opts) {
+  const { x0, y0, x1, y1 } = rect;
+  const { xmin, xmax, ymin, ymax } = opts;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0 - (y0 - y1), x1 - x0, y0 - y1);
+  ctx.clip();
+  ctx.strokeStyle = opts.color || '#4ea1ff';
+  ctx.lineWidth = opts.width || 1.4;
+  ctx.setLineDash(opts.dash || []);
+  ctx.beginPath();
+  for (let i = 0; i < xs.length; i++) {
+    const px = x0 + (xs[i] - xmin) / (xmax - xmin) * (x1 - x0);
+    const py = y0 - (ys[i] - ymin) / (ymax - ymin) * (y0 - y1);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function hline(ctx, rect, y, opts) {
+  const { x0, y0, x1, y1 } = rect;
+  const py = y0 - (y - opts.ymin) / (opts.ymax - opts.ymin) * (y0 - y1);
+  if (py < y1 || py > y0) return;
+  ctx.save();
+  ctx.strokeStyle = opts.color;
+  ctx.setLineDash(opts.dash || []);
+  ctx.lineWidth = opts.width || 1.2;
+  ctx.beginPath(); ctx.moveTo(x0, py); ctx.lineTo(x1, py); ctx.stroke();
+  ctx.restore();
+}
+
+function legend(ctx, W, items, yStart) {
+  ctx.save();
+  ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+  let x = W - 12;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  let y = yStart || 14;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    ctx.fillStyle = it.color;
+    ctx.fillRect(x - 18, y - 1.5, 14, 3);
+    ctx.fillStyle = '#c9d4e6';
+    ctx.fillText(it.label, x - 24, y);
+    y += 15;
+  }
+  ctx.restore();
+}
+
+function drawDashboard(canvas, result) {
+  const { ctx, w, h } = setupCanvas(canvas);
+  const pad = 10;
+  const gap = 12;
+  const pw = (w - pad * 2 - gap) / 2;
+  const ph = (h - pad * 2 - gap) / 2;
+
+  const { metrics, rows, truth, cfg } = result;
+
+  /* ---------- 1. 俯视图 ---------- */
+  {
+    const ox = pad, oy = pad;
+    ctx.save();
+    ctx.translate(ox, oy);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const st of cfg.stations) { minX = Math.min(minX, st.pos[0]); maxX = Math.max(maxX, st.pos[0]); minY = Math.min(minY, st.pos[1]); maxY = Math.max(maxY, st.pos[1]); }
+    for (const cm of cfg.cameras) { minX = Math.min(minX, cm.pos[0]); maxX = Math.max(maxX, cm.pos[0]); minY = Math.min(minY, cm.pos[1]); maxY = Math.max(maxY, cm.pos[1]); }
+    for (let i = 0; i < truth.n; i++) {
+      minX = Math.min(minX, truth.data[i * 6]); maxX = Math.max(maxX, truth.data[i * 6]);
+      minY = Math.min(minY, truth.data[i * 6 + 1]); maxY = Math.max(maxY, truth.data[i * 6 + 1]);
+    }
+    const mx = (maxX - minX) * 0.08, my = (maxY - minY) * 0.08;
+    minX -= mx; maxX += mx; minY -= my; maxY += my;
+
+    const rect = drawAxes(ctx, pw, ph, {
+      xmin: minX, xmax: maxX, ymin: minY, ymax: maxY,
+      xlabel: '东向 [m]', ylabel: '北向 [m]', title: '俯视图：真值 vs 估计',
+    });
+
+    // 真值
+    const tx = [], ty = [];
+    for (let i = 0; i < truth.n; i += 5) { tx.push(truth.data[i * 6]); ty.push(truth.data[i * 6 + 1]); }
+    plotLine(ctx, rect, tx, ty, { xmin: minX, xmax: maxX, ymin: minY, ymax: maxY, color: '#e6edf7', width: 2 });
+    // 估计
+    plotLine(ctx, rect, rows.map(r => r.ex), rows.map(r => r.ey),
+      { xmin: minX, xmax: maxX, ymin: minY, ymax: maxY, color: '#4ea1ff', width: 1.2, dash: [5, 4] });
+
+    // 站点
+    const px = (x) => rect.x0 + (x - minX) / (maxX - minX) * (rect.x1 - rect.x0);
+    const py = (y) => rect.y0 - (y - minY) / (maxY - minY) * (rect.y0 - rect.y1);
+    ctx.fillStyle = '#3ecf8e';
+    for (const st of cfg.stations) {
+      const X = px(st.pos[0]), Y = py(st.pos[1]);
+      ctx.beginPath(); ctx.moveTo(X, Y - 6); ctx.lineTo(X - 5.5, Y + 4); ctx.lineTo(X + 5.5, Y + 4); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#f0a04b';
+    for (const cm of cfg.cameras) {
+      const X = px(cm.pos[0]), Y = py(cm.pos[1]);
+      ctx.fillRect(X - 4.5, Y - 4.5, 9, 9);
+    }
+    legend(ctx, pw, [
+      { label: '真值', color: '#e6edf7' },
+      { label: '滤波估计', color: '#4ea1ff' },
+    ], rect.y0 - 34);
+    ctx.restore();
+  }
+
+  /* ---------- 2. 误差-时间 ---------- */
+  {
+    const ox = pad + pw + gap, oy = pad;
+    ctx.save();
+    ctx.translate(ox, oy);
+    const tmax = rows[rows.length - 1].t;
+    const emax = Math.max(cfg.threshold * 1.05, Math.max(...rows.map(r => r.predErr)) * 1.08);
+    const rect = drawAxes(ctx, pw, ph, {
+      xmin: 0, xmax: tmax, ymin: 0, ymax: emax,
+      xlabel: '时间 [s]', ylabel: '位置误差 [m]', title: '3 秒外推位置误差',
+    });
+    hline(ctx, rect, cfg.threshold, { ymin: 0, ymax: emax, color: '#e6edf7', dash: [6, 4], width: 1.4 });
+    plotLine(ctx, rect, rows.map(r => r.t), rows.map(r => r.predErr),
+      { xmin: 0, xmax: tmax, ymin: 0, ymax: emax, color: '#ff5d6c', width: 1.3 });
+    // 指标线标注放在右侧，避免压住 Y 轴刻度
+    const pyLine = rect.y0 - (cfg.threshold - 0) / (emax - 0) * (rect.y0 - rect.y1);
+    ctx.fillStyle = '#9aa8bf';
+    ctx.font = '11px "Segoe UI","Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`指标 ${cfg.threshold} m`, rect.x1 - 6, pyLine - 4);
+    legend(ctx, pw, [{ label: `P95 ${metrics.p95.toFixed(1)} m`, color: '#ffb46b' }], rect.y0 - 34);
+    ctx.restore();
+  }
+
+  /* ---------- 3. CDF ---------- */
+  {
+    const ox = pad, oy = pad + ph + gap;
+    ctx.save();
+    ctx.translate(ox, oy);
+    const sorted = rows.map(r => r.predErr).sort((a, b) => a - b);
+    const xmax = Math.max(cfg.threshold * 1.1, sorted[sorted.length - 1] * 1.05);
+    const rect = drawAxes(ctx, pw, ph, {
+      xmin: 0, xmax: xmax, ymin: 0, ymax: 100,
+      xlabel: '3 秒预测误差 [m]', ylabel: '累积概率 [%]', title: '误差累积分布 (CDF)',
+    });
+    const xs = sorted, ys = sorted.map((_, i) => (i + 1) / sorted.length * 100);
+    plotLine(ctx, rect, xs, ys, { xmin: 0, xmax: xmax, ymin: 0, ymax: 100, color: '#4ea1ff', width: 2 });
+    hline(ctx, rect, 95, { ymin: 0, ymax: 100, color: '#ffb46b', dash: [3, 3], width: 1 });
+    ctx.restore();
+  }
+
+  /* ---------- 4. 传感器可用性 ---------- */
+  {
+    const ox = pad + pw + gap, oy = pad + ph + gap;
+    ctx.save();
+    ctx.translate(ox, oy);
+    const tmax = rows[rows.length - 1].t;
+    const nmax = Math.max(3, ...rows.map(r => Math.max(r.nRadar, r.nCam))) + 0.5;
+    const rect = drawAxes(ctx, pw, ph, {
+      xmin: 0, xmax: tmax, ymin: 0, ymax: nmax,
+      xlabel: '时间 [s]', ylabel: '可见传感器数', title: '传感器可用性（20 帧滑动平均）',
+    });
+    const smooth = (key) => {
+      const out = [];
+      const win = 20;
+      for (let i = 0; i < rows.length; i++) {
+        let s = 0, n = 0;
+        for (let j = Math.max(0, i - win); j <= Math.min(rows.length - 1, i + win); j++) { s += rows[j][key]; n++; }
+        out.push(s / n);
+      }
+      return out;
+    };
+    plotLine(ctx, rect, rows.map(r => r.t), smooth('nRadar'),
+      { xmin: 0, xmax: tmax, ymin: 0, ymax: nmax, color: '#3ecf8e', width: 1.6 });
+    plotLine(ctx, rect, rows.map(r => r.t), smooth('nCam'),
+      { xmin: 0, xmax: tmax, ymin: 0, ymax: nmax, color: '#f0a04b', width: 1.6 });
+    legend(ctx, pw, [
+      { label: '可见雷达', color: '#3ecf8e' },
+      { label: '可见相机', color: '#f0a04b' },
+    ], rect.y0 - 34);
+    ctx.restore();
+  }
+}
+
+</script>
+<script>
+const DEFAULTS = {
+  radars: [
+    {name:"R1", x:-900, y:-700, z:2, sr:8, sa:1.0, reff:1000, rmax:3000},
+    {name:"R2", x:950,  y:-650, z:2, sr:8, sa:1.0, reff:1000, rmax:3000},
+    {name:"R3", x:0,    y:1000, z:2, sr:8, sa:1.0, reff:1000, rmax:3000}
+  ],
+  cams: [
+    {name:"C1", x:-900, y:-700, z:6, yaw:35,  fov:90, sa:0.10},
+    {name:"C2", x:950,  y:-650, z:6, yaw:120, fov:90, sa:0.10},
+    {name:"C3", x:0,    y:1000, z:6, yaw:-80, fov:90, sa:0.10}
+  ]
+};
+
+function radarRow(r) {
+  return `<tr>
+    <td><input value="${r.name}" style="width:44px"></td>
+    <td><input value="${r.x}" style="width:56px"></td>
+    <td><input value="${r.y}" style="width:56px"></td>
+    <td><input value="${r.z}" style="width:38px"></td>
+    <td><input value="${r.sr}" style="width:42px"></td>
+    <td><input value="${r.sa}" style="width:42px"></td>
+    <td><input value="${r.reff}/${r.rmax}" style="width:72px"></td>
+    <td><button class="mini" onclick="this.closest('tr').remove()">×</button></td>
+  </tr>`;
+}
+function camRow(c) {
+  return `<tr>
+    <td><input value="${c.name}" style="width:44px"></td>
+    <td><input value="${c.x}" style="width:56px"></td>
+    <td><input value="${c.y}" style="width:56px"></td>
+    <td><input value="${c.z}" style="width:38px"></td>
+    <td><input value="${c.yaw}" style="width:46px"></td>
+    <td><input value="${c.fov}" style="width:42px"></td>
+    <td><input value="${c.sa}" style="width:42px"></td>
+    <td><button class="mini" onclick="this.closest('tr').remove()">×</button></td>
+  </tr>`;
+}
+function addRadar() {
+  document.querySelector('#radarTable tbody').insertAdjacentHTML('beforeend',
+    radarRow({name:"R"+(document.querySelectorAll('#radarTable tbody tr').length+1), x:0, y:0, z:2, sr:8, sa:1.0, reff:1000, rmax:3000}));
+}
+function addCam() {
+  document.querySelector('#camTable tbody').insertAdjacentHTML('beforeend',
+    camRow({name:"C"+(document.querySelectorAll('#camTable tbody tr').length+1), x:0, y:0, z:6, yaw:0, fov:90, sa:0.10}));
+}
+function initForm() {
+  document.querySelector('#radarTable tbody').innerHTML = DEFAULTS.radars.map(radarRow).join('');
+  document.querySelector('#camTable tbody').innerHTML = DEFAULTS.cams.map(camRow).join('');
+}
+
+function readRows(tableId, mapper) {
+  return [...document.querySelectorAll('#' + tableId + ' tbody tr')].map(tr => {
+    const v = [...tr.querySelectorAll('input')].map(i => i.value.trim());
+    return mapper(v);
+  });
+}
+
+function collect() {
+  const radars = readRows('radarTable', v => {
+    const [reff, rmax] = v[6].split('/').map(Number);
+    return {name:v[0], x:+v[1], y:+v[2], z:+v[3], sr:+v[4], sa:+v[5], reff:reff||1000, rmax:rmax||3000};
+  });
+  const cams = readRows('camTable', v => ({
+    name:v[0], x:+v[1], y:+v[2], z:+v[3], yaw:+v[4], fov:+v[5], sa:+v[6]
+  }));
+  const wps = document.getElementById('wps').value.trim().split('\n')
+    .map(l => l.split(',').map(Number)).filter(a => a.length === 3 && a.every(n => !isNaN(n)));
+  return {
+    radars, cams,
+    speed: +document.getElementById('speed').value,
+    acc: +document.getElementById('acc').value,
+    rate: +document.getElementById('rate').value,
+    duration: +document.getElementById('dur').value,
+    horizon: +document.getElementById('horizon').value,
+    threshold: +document.getElementById('thr').value,
+    sensor: document.getElementById('sensor').value,
+    filtermode: document.getElementById('filtermode').value,
+    waypoints: wps
+  };
+}
+
+function run() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>计算中…';
+  setTimeout(() => {
+    const hint = document.getElementById('hint');
+    try {
+      hint.textContent = '阶段1: 读取参数…';
+      const input = collect();
+      hint.textContent = '阶段2: 仿真计算…';
+      const res = simulate(input);
+      window.__lastResult = res;
+      hint.textContent = '阶段3: 绘图…';
+      drawDashboard(document.getElementById('plot'), res);
+      hint.textContent = '阶段4: 填充指标…';
+      const m = res.metrics;
+      document.getElementById('mRmse').innerHTML = m.rmse.toFixed(1) + '<span class="u">m</span>';
+      document.getElementById('mP95').innerHTML = m.p95.toFixed(1) + '<span class="u">m</span>';
+      document.getElementById('mEst').innerHTML = m.estRmse.toFixed(1) + '<span class="u">m</span>';
+      document.getElementById('mPass').innerHTML =
+        `<span class="${m.pass ? 'pass' : 'fail'}">${m.pass ? '通过' : '未通过'}</span>`;
+      document.getElementById('hint').innerHTML =
+        `用时 ${m.elapsed.toFixed(0)} ms · 有效帧 ${m.epochs} · 最大误差 ${m.max.toFixed(1)} m · ` +
+        `超阈值帧占比 ${(m.over * 100).toFixed(2)}% · 单帧处理 ${m.latencyMs.toFixed(2)} ms · ` +
+        `相机可见帧 ${(m.camRatio * 100).toFixed(0)}%`;
+    } catch (e) {
+      document.getElementById('hint').innerHTML =
+        '<span style="color:#ff6b6b">运行失败: ' + (e && e.message ? e.message : e) +
+        '<br>' + (e && e.stack ? String(e.stack).split('\n').slice(0, 3).join('<br>') : '') + '</span>';
+      console.error(e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '运行仿真';
+    }
+  }, 50);
+}
+
+initForm();
+window.addEventListener('resize', () => {
+  if (window.__lastResult) drawDashboard(document.getElementById('plot'), window.__lastResult);
+});
+// 首屏自动跑一次，打开就能看到结果
+window.addEventListener('load', () => run());
+</script>
+</body>
+</html>
